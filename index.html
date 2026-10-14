@@ -1,0 +1,933 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>China Solar and Climate Big Data Tracker</title>
+    <!-- Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Leaflet Map framework -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <!-- SheetJS for general Excel parsing -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <!-- PapaParse for fast streaming CSV parsing of millions of rows -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+    <!-- Chart.js for meteorological curves -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- html2canvas for HD JPG map export -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    
+    <style>
+        body, html { margin: 0; padding: 0; height: 100%; font-family: 'Segoe UI', system-ui, sans-serif; }
+        /* Light ocean background color matching China Hydropower Tracker basemap */
+        #map { 
+            height: 100%; 
+            width: 100%; 
+            z-index: 1; 
+            background-color: #d2e8f8; 
+        }
+        
+        /* Drag and drop transition styling */
+        .drop-zone { 
+            border: 2px dashed #64748b; 
+            transition: all 0.3s ease; 
+        }
+        .drop-zone.dragover { 
+            background-color: #0f2d1e; 
+            border-color: #22c55e; 
+        }
+        
+        /* Popup customized size for embedded Chart.js instances */
+        .leaflet-popup-content-wrapper {
+            border-radius: 0.75rem;
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.3);
+            padding: 4px;
+        }
+        .popup-chart-container {
+            width: 320px;
+            height: 180px;
+            margin-top: 8px;
+        }
+
+        /* Glassmorphic controllers overlay */
+        .hud-glass {
+            background-color: rgba(15, 23, 42, 0.85);
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        /* Interactive scrollbar custom theme */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #1e293b; }
+        ::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
+    </style>
+</head>
+<body class="flex h-screen bg-slate-950 text-slate-100 overflow-hidden">
+
+    <!-- Left side control panel -->
+    <div class="w-85 bg-slate-900 border-r border-slate-800 shadow-2xl z-10 flex flex-col h-full absolute left-0 top-0">
+        <!-- Brand header banner -->
+        <div class="p-5 border-b border-slate-800 bg-slate-950">
+            <h1 class="text-lg font-bold tracking-wide text-emerald-400">China Solar And Climate Dashboard</h1>
+            <p class="text-xs text-slate-400 mt-1">High-Performance Big Data Analyzer</p>
+        </div>
+
+        <div class="p-5 flex-grow overflow-y-auto space-y-6">
+            <!-- 1. Data file drop box -->
+            <div>
+                <h2 class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">1. Data Import (Supports Up To 100MB+)</h2>
+                <div id="drop-zone" class="drop-zone rounded-lg p-5 text-center cursor-pointer bg-slate-800/50 hover:bg-slate-800">
+                    <svg class="w-8 h-8 text-slate-400 mx-auto mb-2 animate-bounce" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
+                    </svg>
+                    <p class="text-xs font-medium text-slate-300">Drag And Drop Big File Here</p>
+                    <p class="text-[10px] text-slate-500 mt-1">Accepts Solar CSV Data Rows (6M+ Rows)</p>
+                    <input type="file" id="file-input" class="hidden" accept=".csv, .xlsx" />
+                </div>
+                <div id="status-message" class="mt-2 text-xs text-emerald-400 font-medium hidden"></div>
+
+                <!-- Export HD JPG Button (Excludes Left Menu Bar) -->
+                <button id="btn-export-jpg" class="w-full mt-3 py-2.5 px-4 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold rounded-lg text-xs transition duration-200 flex items-center justify-center space-x-2 shadow-lg cursor-pointer">
+                    <svg class="w-4 h-4 text-slate-950" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
+                    </svg>
+                    <span>Output HD JPG Map</span>
+                </button>
+            </div>
+
+            <!-- 2. Dual view visual switch -->
+            <div>
+                <h2 class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">2. View Mode</h2>
+                <div class="flex bg-slate-950 p-1 rounded-lg">
+                    <button id="btn-map-view" class="flex-1 py-1.5 text-xs font-semibold rounded bg-emerald-500 text-slate-950">
+                        Geographical Map
+                    </button>
+                    <button id="btn-chart-view" class="flex-1 py-1.5 text-xs font-semibold rounded text-slate-400 hover:text-white">
+                        Correlation Analysis
+                    </button>
+                </div>
+            </div>
+
+            <!-- 3. Meteorological parameter select dropdown -->
+            <div>
+                <h2 class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">3. Render Factor</h2>
+                <select id="factor-select" class="w-full bg-slate-950 border border-slate-800 text-xs rounded p-2 text-slate-200 outline-none focus:border-emerald-500">
+                    <option value="temp">Average Temperature (℃)</option>
+                    <option value="rain">Daily Rainfall (mm)</option>
+                    <option value="wind">Average Wind Speed (m/s)</option>
+                </select>
+            </div>
+
+            <!-- 4. Legend indicators -->
+            <div>
+                <h2 class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">4. Legend Color Scheme</h2>
+                <div id="legend-container" class="space-y-2 text-xs bg-slate-950 p-3 rounded-lg border border-slate-800">
+                    <!-- Updated dynamically -->
+                </div>
+            </div>
+
+            <!-- 5. Geographical region statistics telemetry -->
+            <div id="stats-container" class="border-t border-slate-800 pt-4 hidden">
+                <h2 class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">5. National Stats Telemetry</h2>
+                <div class="grid grid-cols-2 gap-2 text-center">
+                    <div class="bg-slate-800 p-2.5 rounded border border-slate-700/50">
+                        <p class="text-[10px] text-slate-400 mb-0.5">Solar Stations</p>
+                        <p class="text-base font-bold text-emerald-400" id="stat-count">0</p>
+                    </div>
+                    <div class="bg-slate-800 p-2.5 rounded border border-slate-700/50">
+                        <p class="text-[10px] text-slate-400 mb-0.5">Average Level</p>
+                        <p class="text-base font-bold text-cyan-400" id="stat-avg-val">0</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main display workflow area -->
+    <div class="flex-grow relative ml-85 h-full">
+        <!-- Leaflet map element container -->
+        <div id="map-container" class="w-full h-full">
+            <div id="map"></div>
+            
+            <!-- Floating timeline slider panel -->
+            <div class="absolute bottom-6 left-1/2 -translate-x-1/2 w-[85%] z-[500] hud-glass px-6 py-4 rounded-xl shadow-2xl flex flex-col space-y-2">
+                <div class="flex justify-between text-xs text-slate-300">
+                    <span class="font-bold flex items-center">
+                        <span class="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse mr-2"></span>
+                        Simulation Timeline: <span id="day-display" class="text-emerald-400 font-mono text-sm ml-1">Day 1 (01/01)</span>
+                    </span>
+                    <span class="text-slate-400">Drag Slider To Update Meteorological Color Mapping Across China</span>
+                </div>
+                <div class="flex items-center space-x-4">
+                    <button id="btn-play" class="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold p-1.5 rounded-lg text-xs transition duration-200">
+                        Play Timeline
+                    </button>
+                    <input type="range" id="time-slider" min="1" max="365" value="1" class="flex-grow h-2 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-emerald-400 outline-none" />
+                </div>
+            </div>
+        </div>
+
+        <!-- Embedded analytics plot system overlay (Hidden initially) -->
+        <div id="analytics-container" class="absolute inset-0 bg-slate-950 z-[400] p-8 hidden overflow-y-auto space-y-6">
+            <div class="flex justify-between items-center border-b border-slate-800 pb-4">
+                <h2 class="text-xl font-bold text-emerald-400">Meteorological Factor Correlation Analysis</h2>
+                <p class="text-xs text-slate-400">Multidimensional Climate Distribution Fitting Across Registered Stations</p>
+            </div>
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <!-- Scatter Chart -->
+                <div class="bg-slate-900 p-5 rounded-xl border border-slate-800 shadow-lg">
+                    <h3 class="text-sm font-bold text-slate-300 mb-4">Capacity Mapping: Station Capacity (MW) vs Rendered Metric</h3>
+                    <div class="h-80">
+                        <canvas id="scatterChart"></canvas>
+                    </div>
+                </div>
+                <!-- Histogram Chart -->
+                <div class="bg-slate-900 p-5 rounded-xl border border-slate-800 shadow-lg">
+                    <h3 class="text-sm font-bold text-slate-300 mb-4">Climate Frequency Histogram Distribution</h3>
+                    <div class="h-80">
+                        <canvas id="histogramChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- UI loader overlay blocker for high-throughput files -->
+        <div id="loader" class="absolute inset-0 bg-black/85 z-[1000] items-center justify-center flex-col hidden">
+            <div class="animate-spin rounded-full h-16 w-16 border-4 border-emerald-500 border-t-transparent mb-4"></div>
+            <p class="text-lg font-bold text-white tracking-wider" id="loader-title">Streaming & Parsing Solar Meteorological Big Data...</p>
+            <p class="text-xs text-slate-400 mt-2" id="loader-progress">Pre-Allocating TypedArray Matrices to Prevent Memory Leaks...</p>
+        </div>
+    </div>
+
+    <script>
+        // --- 1. China Bound constraints and Map Initiation ---
+        const chinaSouthWest = L.latLng(15.0, 72.0);
+        const chinaNorthEast = L.latLng(54.0, 137.0);
+        const chinaBounds = L.latLngBounds(chinaSouthWest, chinaNorthEast);
+
+        const map = L.map('map', { 
+            preferCanvas: true, 
+            zoomControl: false,
+            minZoom: 4,
+            maxZoom: 12,
+            maxBounds: chinaBounds,
+            maxBoundsViscosity: 1.0
+        }).setView([36.0, 104.0], 4);
+        
+        L.control.zoom({ position: 'topright' }).addTo(map);
+
+        // Light Ocean Base Tile Layer (Identical to China Hydropower Tracker basemap)
+        L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Ocean/World_Ocean_Base/MapServer/tile/{z}/{y}/{x}', {
+            attribution: 'Tiles &copy; Esri &mdash; Sources: GEBCO, NOAA, CHS, OSU, UNH, CSUMB, National Geographic, DeLorme, NAVTEQ',
+            maxZoom: 16,
+            crossOrigin: 'anonymous'
+        }).addTo(map);
+
+        const dataLayer = L.layerGroup().addTo(map);
+
+        // --- 2. State & Memory Buffer Management ---
+        let stationsList = [];   // Active coordinate mapped station list metadata
+        let stationsMap = new Map(); // Fast coordinate index to handle duplicated station entries
+        let currentDay = 1;      // Year slider tracking index
+        let currentFactor = 'temp'; // Parameter category selector
+        let playInterval = null; 
+        let scatterChartInstance = null;
+        let histogramChartInstance = null;
+
+        // Big Data Memory Allocation Limit parameters
+        const MAX_STATIONS = 20000;
+        // Flat Float32Array allocations (Memory-efficient binary array offsets instead of high overhead JS objects)
+        let tempMatrix = new Float32Array(MAX_STATIONS * 365);
+        let rainMatrix = new Float32Array(MAX_STATIONS * 365);
+        let windMatrix = new Float32Array(MAX_STATIONS * 365);
+
+        // Check if real meteorological data has been streamed/populated
+        let hasRealMeteorologicalData = false;
+
+        // --- 3. Dynamic Legend System ---
+        const factorConfigs = {
+            temp: {
+                title: "Average Temperature (℃)",
+                min: -15, max: 35,
+                colors: ['#3b82f6', '#60a5fa', '#fef08a', '#f97316', '#ef4444'], // cold -> temperate -> hot
+                unit: "℃"
+            },
+            rain: {
+                title: "Daily Rainfall (mm)",
+                min: 0, max: 50,
+                colors: ['#cbd5e1', '#93c5fd', '#3b82f6', '#1d4ed8', '#1e3a8a'], // dry -> rain
+                unit: "mm"
+            },
+            wind: {
+                title: "Average Wind Speed (m/s)",
+                min: 0, max: 15,
+                colors: ['#a7f3d0', '#34d399', '#059669', '#065f46', '#022c22'], // breeze -> high wind
+                unit: "m/s"
+            }
+        };
+
+        // Linear color interpolation
+        function getColorForValue(val, config) {
+            const { min, max, colors } = config;
+            let ratio = (val - min) / (max - min);
+            ratio = Math.max(0, Math.min(1, ratio));
+            
+            const segmentCount = colors.length - 1;
+            const segment = Math.floor(ratio * segmentCount);
+            const segmentRatio = (ratio * segmentCount) - segment;
+            
+            if (segment >= segmentCount) return colors[colors.length - 1];
+            
+            const c1 = hexToRgb(colors[segment]);
+            const c2 = hexToRgb(colors[segment + 1]);
+            
+            const r = Math.round(c1.r + (c2.r - c1.r) * segmentRatio);
+            const g = Math.round(c1.g + (c2.g - c1.g) * segmentRatio);
+            const b = Math.round(c1.b + (c2.b - c1.b) * segmentRatio);
+            
+            return `rgb(${r}, ${g}, ${b})`;
+        }
+
+        function hexToRgb(hex) {
+            const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+            return result ? {
+                r: parseInt(result[1], 16),
+                g: parseInt(result[2], 16),
+                b: parseInt(result[3], 16)
+            } : { r: 128, g: 128, b: 128 };
+        }
+
+        function updateLegendUI() {
+            const config = factorConfigs[currentFactor];
+            const step = (config.max - config.min) / 4;
+            const container = document.getElementById('legend-container');
+            container.innerHTML = `<p class="font-bold mb-2 text-slate-300">${config.title}</p>`;
+            
+            for (let i = 0; i <= 4; i++) {
+                const val = (config.min + step * i).toFixed(1);
+                const color = getColorForValue(parseFloat(val), config);
+                container.innerHTML += `
+                    <div class="flex items-center space-x-2">
+                        <span class="w-4 h-4 rounded" style="background-color: ${color}"></span>
+                        <span class="text-slate-400 font-mono text-xs">${val} ${config.unit}</span>
+                    </div>
+                `;
+            }
+        }
+        updateLegendUI();
+
+        // Helper function: Extract value from row using dynamic case-insensitive key check
+        function getValue(row, possibleNames) {
+            const keys = Object.keys(row);
+            for (const key of keys) {
+                const cleanKey = key.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+                for (const name of possibleNames) {
+                    if (cleanKey === name.toLowerCase().replace(/[^a-z0-9]/g, '')) {
+                        return row[key];
+                    }
+                }
+            }
+            return null;
+        }
+
+        // Helper function: Convert various date forms or simple day index numbers to Day-Of-Year index (0-364)
+        function getDayOfYear(dateStr) {
+            if (!dateStr) return 0;
+            const val = parseInt(dateStr);
+            if (!isNaN(val) && val >= 1 && val <= 366) {
+                return Math.min(364, val - 1);
+            }
+            const d = new Date(dateStr);
+            if (!isNaN(d.getTime())) {
+                const start = new Date(d.getFullYear(), 0, 0);
+                const diff = d - start;
+                const oneDay = 1000 * 60 * 60 * 24;
+                const day = Math.floor(diff / oneDay);
+                return Math.max(0, Math.min(364, day - 1));
+            }
+            return 0;
+        }
+
+        // --- 4. Microclimate Generation Simulation (Fallback Only) ---
+        function fillWeatherBuffers(stationIdx, lat, lng) {
+            const baseTemp = 28 - Math.abs(lat - 22) * 0.8; 
+            const annualAmplitude = lat > 35 ? 18 : 8;    
+
+            for (let d = 0; d < 365; d++) {
+                const index = stationIdx * 365 + d;
+
+                const tempRad = ((d - 105) / 365) * 2 * Math.PI;
+                let dailyTemp = baseTemp + annualAmplitude * Math.sin(tempRad) + (Math.sin(d * 1.5) * 2.5);
+                tempMatrix[index] = parseFloat(dailyTemp.toFixed(1));
+
+                const isCoast = lng > 115;
+                const wetSeasonRad = ((d - 170) / 365) * 2 * Math.PI;
+                let baseRain = isCoast ? 8 : 2;
+                let rainProb = baseRain + (isCoast ? 15 : 6) * Math.sin(wetSeasonRad);
+                rainProb = Math.max(0, rainProb);
+                let dailyRain = Math.random() < (rainProb / 30) ? (Math.random() * rainProb * 3) : 0;
+                rainMatrix[index] = parseFloat(dailyRain.toFixed(1));
+
+                const isWestArid = lng < 100 && lat > 35;
+                let baseWind = isWestArid ? 6 : 3;
+                let dailyWind = baseWind + Math.sin(((d - 60) / 365) * 4 * Math.PI) * 2 + (Math.random() * 3);
+                windMatrix[index] = parseFloat(Math.max(0.5, dailyWind).toFixed(1));
+            }
+        }
+
+        // --- 5. Date Labels Mapper ---
+        function getDayLabel(day) {
+            const months = [
+                { name: "01/", days: 31 },
+                { name: "02/", days: 28 },
+                { name: "03/", days: 31 },
+                { name: "04/", days: 30 },
+                { name: "05/", days: 31 },
+                { name: "06/", days: 30 },
+                { name: "07/", days: 31 },
+                { name: "08/", days: 31 },
+                { name: "09/", days: 30 },
+                { name: "10/", days: 31 },
+                { name: "11/", days: 30 },
+                { name: "12/", days: 31 }
+            ];
+            
+            let d = day;
+            for (let i = 0; i < months.length; i++) {
+                if (d <= months[i].days) {
+                    return `Day ${day} (${months[i].name}${String(d).padStart(2, '0')})`;
+                }
+                d -= months[i].days;
+            }
+            return `Day ${day}`;
+        }
+
+        // --- 6. High Throughput Map Renderer ---
+        function drawSpatialMapPoints() {
+            dataLayer.clearLayers();
+            const config = factorConfigs[currentFactor];
+            const matrix = currentFactor === 'temp' ? tempMatrix : (currentFactor === 'rain' ? rainMatrix : windMatrix);
+
+            stationsList.forEach(station => {
+                const matrixIndex = station.id * 365 + (currentDay - 1);
+                const currentVal = matrix[matrixIndex];
+                const color = getColorForValue(currentVal, config);
+                
+                const radius = Math.max(2, Math.min(Math.sqrt(station.capacity) * 0.15, 8));
+
+                const marker = L.circleMarker([station.lat, station.lng], {
+                    radius: radius,
+                    fillColor: color,
+                    color: '#ffffff',
+                    weight: 0.5,
+                    opacity: 0.9,
+                    fillOpacity: 0.8
+                });
+
+                marker.on('click', () => {
+                    setTimeout(() => {
+                        createPopupChart(station);
+                    }, 50);
+                });
+
+                station.marker = marker;
+                dataLayer.addLayer(marker);
+            });
+        }
+
+        function quickUpdateMapColors() {
+            const config = factorConfigs[currentFactor];
+            const matrix = currentFactor === 'temp' ? tempMatrix : (currentFactor === 'rain' ? rainMatrix : windMatrix);
+            
+            stationsList.forEach(station => {
+                if (station.marker) {
+                    const matrixIndex = station.id * 365 + (currentDay - 1);
+                    const val = matrix[matrixIndex];
+                    const color = getColorForValue(val, config);
+                    station.marker.setStyle({ fillColor: color });
+                }
+            });
+        }
+
+        function updateDailyStats() {
+            if (stationsList.length === 0) return;
+            const matrix = currentFactor === 'temp' ? tempMatrix : (currentFactor === 'rain' ? rainMatrix : windMatrix);
+            let sum = 0;
+            stationsList.forEach(s => {
+                sum += matrix[s.id * 365 + (currentDay - 1)];
+            });
+            const avg = (sum / stationsList.length).toFixed(1);
+            const unit = factorConfigs[currentFactor].unit;
+            document.getElementById('stat-avg-val').innerText = `${avg} ${unit}`;
+        }
+
+        // --- 7. Popup Detailed Trend Chart (Chart.js) ---
+        function createPopupChart(station) {
+            const popupId = `popup-chart-${station.id}`;
+            const matrixIndexOffset = station.id * 365;
+
+            const temps = Array.from(tempMatrix.subarray(matrixIndexOffset, matrixIndexOffset + 365));
+            const rains = Array.from(rainMatrix.subarray(matrixIndexOffset, matrixIndexOffset + 365));
+
+            const popupContent = `
+                <div class="popup-content">
+                    <h3 class="font-bold text-slate-900 border-b pb-1 text-sm">${station.name}</h3>
+                    <div class="text-[11px] text-slate-500 mt-1 space-y-0.5">
+                        <div><b>Province / State:</b> ${station.province}</div>
+                        <div><b>Capacity:</b> ${station.capacity} MW</div>
+                        <div><b>Current Temp:</b> ${tempMatrix[station.id * 365 + (currentDay-1)]} ℃</div>
+                    </div>
+                    <div class="popup-chart-container">
+                        <canvas id="${popupId}"></canvas>
+                    </div>
+                </div>
+            `;
+
+            station.marker.bindPopup(popupContent).openPopup();
+
+            setTimeout(() => {
+                const ctx = document.getElementById(popupId);
+                if (!ctx) return;
+
+                const labels = Array.from({length: 365}, (_, i) => i + 1);
+
+                new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: labels,
+                        datasets: [
+                            {
+                                label: 'Temperature (℃)',
+                                data: temps,
+                                borderColor: '#ef4444',
+                                borderWidth: 1.5,
+                                pointRadius: 0,
+                                yAxisID: 'y'
+                            },
+                            {
+                                label: 'Rainfall (mm)',
+                                data: rains,
+                                borderColor: '#3b82f6',
+                                borderWidth: 1,
+                                backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                                fill: true,
+                                pointRadius: 0,
+                                yAxisID: 'y1'
+                            }
+                        ]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: {
+                                display: true,
+                                labels: { boxWidth: 10, font: { size: 9 } }
+                            },
+                            tooltip: { mode: 'index', intersect: false }
+                        },
+                        scales: {
+                            x: {
+                                ticks: { maxTicksLimit: 6, font: { size: 8 } },
+                                grid: { display: false }
+                            },
+                            y: {
+                                type: 'linear', display: true, position: 'left',
+                                title: { display: true, text: 'Temp', font: { size: 8 } },
+                                ticks: { font: { size: 8 } }
+                            },
+                            y1: {
+                                type: 'linear', display: true, position: 'right',
+                                title: { display: true, text: 'Rain', font: { size: 8 } },
+                                grid: { drawOnChartArea: false },
+                                ticks: { font: { size: 8 } }
+                            }
+                        }
+                    }
+                });
+            }, 150);
+        }
+
+        // --- 8. Multidimensional Stats Panels ---
+        function renderAnalyticsCharts() {
+            if (stationsList.length === 0) return;
+
+            const config = factorConfigs[currentFactor];
+            const matrix = currentFactor === 'temp' ? tempMatrix : (currentFactor === 'rain' ? rainMatrix : windMatrix);
+            
+            const activeFactorData = stationsList.map(s => matrix[s.id * 365 + (currentDay - 1)]);
+
+            const scatterData = stationsList.map((s, i) => ({
+                x: activeFactorData[i],
+                y: s.capacity
+            }));
+
+            if (scatterChartInstance) scatterChartInstance.destroy();
+            const ctxScatter = document.getElementById('scatterChart').getContext('2d');
+            scatterChartInstance = new Chart(ctxScatter, {
+                type: 'scatter',
+                data: {
+                    datasets: [{
+                        label: `${config.title} vs Capacity (MW)`,
+                        data: scatterData,
+                        backgroundColor: 'rgba(16, 185, 129, 0.6)',
+                        borderColor: '#10b981',
+                        pointRadius: 3
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: {
+                            title: { display: true, text: config.title, color: '#94a3b8' },
+                            ticks: { color: '#94a3b8' },
+                            grid: { color: '#334155' }
+                        },
+                        y: {
+                            title: { display: true, text: 'Capacity (MW)', color: '#94a3b8' },
+                            ticks: { color: '#94a3b8' },
+                            grid: { color: '#334155' }
+                        }
+                    },
+                    plugins: {
+                        legend: { labels: { color: '#e2e8f0' } }
+                    }
+                }
+            });
+
+            const min = config.min;
+            const max = config.max;
+            const binCount = 15;
+            const binWidth = (max - min) / binCount;
+            const bins = Array(binCount).fill(0);
+            const binLabels = [];
+
+            for (let b = 0; b < binCount; b++) {
+                const start = min + b * binWidth;
+                const end = start + binWidth;
+                binLabels.push(`${start.toFixed(1)}-${end.toFixed(1)}`);
+            }
+
+            activeFactorData.forEach(val => {
+                let binIdx = Math.floor((val - min) / binWidth);
+                binIdx = Math.max(0, Math.min(binCount - 1, binIdx));
+                bins[binIdx]++;
+            });
+
+            if (histogramChartInstance) histogramChartInstance.destroy();
+            const ctxHist = document.getElementById('histogramChart').getContext('2d');
+            histogramChartInstance = new Chart(ctxHist, {
+                type: 'bar',
+                data: {
+                    labels: binLabels,
+                    datasets: [{
+                        label: 'Station Climate Distribution Frequency',
+                        data: bins,
+                        backgroundColor: 'rgba(6, 182, 212, 0.7)',
+                        borderColor: '#06b6d4',
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: {
+                            title: { display: true, text: 'Meteorological Interval Binning', color: '#94a3b8' },
+                            ticks: { color: '#94a3b8', font: { size: 9 } },
+                            grid: { display: false }
+                        },
+                        y: {
+                            title: { display: true, text: 'Distribution Count', color: '#94a3b8' },
+                            ticks: { color: '#94a3b8' },
+                            grid: { color: '#334155' }
+                        }
+                    },
+                    plugins: {
+                        legend: { labels: { color: '#e2e8f0' } }
+                    }
+                }
+            });
+        }
+
+        // --- 9. Control Panel Subscriptions ---
+        const timeSlider = document.getElementById('time-slider');
+        const dayDisplay = document.getElementById('day-display');
+        const factorSelect = document.getElementById('factor-select');
+        const btnPlay = document.getElementById('btn-play');
+
+        timeSlider.addEventListener('input', (e) => {
+            currentDay = parseInt(e.target.value);
+            dayDisplay.innerText = getDayLabel(currentDay);
+            quickUpdateMapColors();
+            updateDailyStats();
+            if (!document.getElementById('analytics-container').classList.contains('hidden')) {
+                renderAnalyticsCharts();
+            }
+        });
+
+        factorSelect.addEventListener('change', (e) => {
+            currentFactor = e.target.value;
+            updateLegendUI();
+            drawSpatialMapPoints();
+            updateDailyStats();
+            if (!document.getElementById('analytics-container').classList.contains('hidden')) {
+                renderAnalyticsCharts();
+            }
+        });
+
+        btnPlay.addEventListener('click', () => {
+            if (playInterval) {
+                clearInterval(playInterval);
+                playInterval = null;
+                btnPlay.innerText = "Play Timeline";
+                btnPlay.className = "bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold p-1.5 rounded-lg text-xs transition duration-200";
+            } else {
+                btnPlay.innerText = "Pause Timeline";
+                btnPlay.className = "bg-red-500 hover:bg-red-400 text-white font-bold p-1.5 rounded-lg text-xs transition duration-200";
+                playInterval = setInterval(() => {
+                    currentDay = currentDay >= 365 ? 1 : currentDay + 1;
+                    timeSlider.value = currentDay;
+                    dayDisplay.innerText = getDayLabel(currentDay);
+                    quickUpdateMapColors();
+                    updateDailyStats();
+                    if (!document.getElementById('analytics-container').classList.contains('hidden')) {
+                        renderAnalyticsCharts();
+                    }
+                }, 100);
+            }
+        });
+
+        const btnMapView = document.getElementById('btn-map-view');
+        const btnChartView = document.getElementById('btn-chart-view');
+        const mapContainer = document.getElementById('map-container');
+        const analyticsContainer = document.getElementById('analytics-container');
+
+        btnMapView.addEventListener('click', () => {
+            btnMapView.className = "flex-1 py-1.5 text-xs font-semibold rounded bg-emerald-500 text-slate-950";
+            btnChartView.className = "flex-1 py-1.5 text-xs font-semibold rounded text-slate-400 hover:text-white";
+            mapContainer.classList.remove('hidden');
+            analyticsContainer.classList.add('hidden');
+        });
+
+        btnChartView.className = "flex-1 py-1.5 text-xs font-semibold rounded text-slate-400 hover:text-white";
+        btnChartView.addEventListener('click', () => {
+            btnChartView.className = "flex-1 py-1.5 text-xs font-semibold rounded bg-cyan-500 text-slate-950";
+            btnMapView.className = "flex-1 py-1.5 text-xs font-semibold rounded text-slate-400 hover:text-white";
+            mapContainer.classList.add('hidden');
+            analyticsContainer.classList.remove('hidden');
+            renderAnalyticsCharts();
+        });
+
+        // --- 10. Streaming PapaParse Big Data Processor (Capped at 6M+ Rows) ---
+        const dropZone = document.getElementById('drop-zone');
+        const fileInput = document.getElementById('file-input');
+
+        dropZone.addEventListener('click', () => fileInput.click());
+
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) handleFile(e.target.files[0]);
+        });
+
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.classList.add('dragover');
+        });
+
+        dropZone.addEventListener('dragleave', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+        });
+
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+            if (e.dataTransfer.files.length > 0) handleFile(e.dataTransfer.files[0]);
+        });
+
+        function handleFile(file) {
+            const statusMsg = document.getElementById('status-message');
+            const loader = document.getElementById('loader');
+            const loaderProgress = document.getElementById('loader-progress');
+            
+            statusMsg.innerText = `Reading File: ${file.name}...`;
+            statusMsg.className = "mt-2 text-xs text-blue-400 font-medium block";
+            statusMsg.classList.remove('hidden');
+
+            loader.classList.add('active');
+            loaderProgress.innerText = "Parsing Data Rows with Multi-Threaded Workers...";
+
+            stationsList = [];
+            stationsMap.clear();
+            hasRealMeteorologicalData = false;
+
+            tempMatrix.fill(0);
+            rainMatrix.fill(0);
+            windMatrix.fill(0);
+
+            let rowCount = 0;
+            let currentStationCount = 0;
+
+            Papa.parse(file, {
+                header: true,
+                skipEmptyLines: true,
+                worker: true,
+                chunkSize: 1024 * 1024 * 10,
+                step: function(results) {
+                    const row = results.data;
+                    rowCount++;
+
+                    if (rowCount % 100000 === 0) {
+                        loaderProgress.innerText = `Successfully Streamed ${formatNumber(rowCount)} Rows...`;
+                    }
+
+                    const lat = parseFloat(getValue(row, ['latitude', 'lat']));
+                    const lng = parseFloat(getValue(row, ['longitude', 'lng', 'lon']));
+                    const capacity = parseFloat(getValue(row, ['capacitymw', 'capacity', 'capacity rating', 'size']) || 0);
+                    const countryRaw = getValue(row, ['countryarea', 'country', 'area', 'nation']) || 'china';
+                    const country = countryRaw.toLowerCase();
+                    const state = getValue(row, ['stateprovince', 'province', 'state']) || 'China';
+                    const name = getValue(row, ['projectname', 'name', 'project', 'stationname', 'station']) || `Solar Station #${currentStationCount + 1}`;
+
+                    const dateVal = getValue(row, ['date', 'day', 'time', 'julianday', 'dayofyear']);
+                    const tempVal = parseFloat(getValue(row, ['temp', 'temperature', 'avgtemp', 'meantemp', 't2m', 'temperature2m']));
+                    const rainVal = parseFloat(getValue(row, ['rain', 'rainfall', 'precipitation', 'precip', 'tp', 'totalprecipitation']));
+                    const windVal = parseFloat(getValue(row, ['wind', 'windspeed', 'ws', 'ws10m', 'windspeed10m']));
+
+                    if (!isNaN(lat) && !isNaN(lng) && (country.includes('china') || country === 'cn' || country === '')) {
+                        const coordKey = `${lat.toFixed(4)},${lng.toFixed(4)}`;
+                        
+                        let stationIdx;
+                        if (!stationsMap.has(coordKey)) {
+                            if (currentStationCount >= MAX_STATIONS) return;
+                            
+                            stationIdx = currentStationCount;
+                            stationsMap.set(coordKey, stationIdx);
+                            
+                            stationsList.push({
+                                id: stationIdx,
+                                name: name,
+                                lat: lat,
+                                lng: lng,
+                                capacity: capacity,
+                                province: state,
+                                marker: null
+                            });
+
+                            fillWeatherBuffers(stationIdx, lat, lng);
+                            currentStationCount++;
+                        } else {
+                            stationIdx = stationsMap.get(coordKey);
+                        }
+
+                        if (dateVal && (!isNaN(tempVal) || !isNaN(rainVal) || !isNaN(windVal))) {
+                            hasRealMeteorologicalData = true;
+                            const dayIdx = getDayOfYear(dateVal);
+                            const index = stationIdx * 365 + dayIdx;
+                            
+                            if (!isNaN(tempVal)) tempMatrix[index] = tempVal;
+                            if (!isNaN(rainVal)) rainMatrix[index] = rainVal;
+                            if (!isNaN(windVal)) windMatrix[index] = windVal;
+                        }
+                    }
+                },
+                complete: function() {
+                    loader.classList.remove('active');
+                    if (stationsList.length === 0) {
+                        statusMsg.innerText = "Error: No Valid China Spatial Coordinates Found! Check if your columns include 'Latitude'/'Lat' and 'Longitude'/'Lng'.";
+                        statusMsg.className = "mt-2 text-xs text-red-500 font-medium block";
+                        return;
+                    }
+
+                    drawSpatialMapPoints();
+                    
+                    document.getElementById('stats-container').classList.remove('hidden');
+                    document.getElementById('stat-count').innerText = formatNumber(stationsList.length);
+                    updateDailyStats();
+
+                    let successNote = `Parsed ${formatNumber(rowCount)} Rows. Loaded ${formatNumber(stationsList.length)} Stations.`;
+                    if (hasRealMeteorologicalData) {
+                        successNote += " Loaded real timeline weather data.";
+                    } else {
+                        successNote += " Simulated microclimate values (No real climate columns detected).";
+                    }
+                    statusMsg.innerText = successNote;
+                    statusMsg.className = "mt-2 text-xs text-green-400 font-medium block";
+
+                    const group = new L.featureGroup(stationsList.map(s => s.marker));
+                    map.fitBounds(group.getBounds(), { padding: [40, 40], maxZoom: 6 });
+                },
+                error: function(err) {
+                    console.error("Parsing failed:", err);
+                    loader.classList.remove('active');
+                    statusMsg.innerText = "Error Processing Streaming File Interface.";
+                    statusMsg.className = "mt-2 text-xs text-red-500 font-medium block";
+                }
+            });
+        }
+
+        function formatNumber(num) {
+            return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+        }
+
+        // --- 11. High-Resolution JPG Map Output Handler (Excludes Left Menu Bar) ---
+        const btnExportJpg = document.getElementById('btn-export-jpg');
+
+        btnExportJpg.addEventListener('click', async () => {
+            const mapContainerElem = document.getElementById('map-container');
+            if (!mapContainerElem) return;
+
+            const originalBtnHTML = btnExportJpg.innerHTML;
+            btnExportJpg.disabled = true;
+            btnExportJpg.innerHTML = `
+                <svg class="animate-spin h-4 w-4 text-slate-950 inline mr-1" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                <span>Generating HD JPG...</span>
+            `;
+
+            try {
+                // Brief pause to allow button spinner state to render
+                await new Promise(resolve => setTimeout(resolve, 150));
+
+                // Capture exclusively the right map viewport container (excluding left sidebar)
+                const canvas = await html2canvas(mapContainerElem, {
+                    useCORS: true,
+                    allowTaint: true,
+                    scale: 2, // 2x high resolution scale
+                    logging: false,
+                    ignoreElements: (element) => {
+                        return element.id === 'loader';
+                    }
+                });
+
+                // Generate JPG image binary DataURL
+                const imgData = canvas.toDataURL('image/jpeg', 0.95);
+
+                // Auto download image file
+                const downloadLink = document.createElement('a');
+                const timeStamp = new Date().toISOString().slice(0, 10);
+                downloadLink.download = `China_Solar_Map_Day${currentDay}_${currentFactor}_${timeStamp}.jpg`;
+                downloadLink.href = imgData;
+                document.body.appendChild(downloadLink);
+                downloadLink.click();
+                document.body.removeChild(downloadLink);
+
+            } catch (error) {
+                console.error("Map JPEG export failed:", error);
+                const statusMsg = document.getElementById('status-message');
+                if (statusMsg) {
+                    statusMsg.innerText = "Export failed. Please check browser console.";
+                    statusMsg.className = "mt-2 text-xs text-red-500 font-medium block";
+                }
+            } finally {
+                btnExportJpg.disabled = false;
+                btnExportJpg.innerHTML = originalBtnHTML;
+            }
+        });
+    </script>
+</body>
+</html>
